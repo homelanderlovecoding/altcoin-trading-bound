@@ -1,9 +1,12 @@
-import { createConfig, getQuote, executeRoute, getRoutes } from '@lifi/sdk';
+import { createConfig, executeRoute, getRoutes } from '@lifi/sdk';
 
-// Initialize LiFi SDK
-createConfig({
-  integrator: 'bound-mvp',
-});
+// Lazy init — ensure createConfig is called exactly once before any SDK use
+let _lifiInitialized = false;
+function ensureLifiInit() {
+  if (_lifiInitialized) return;
+  createConfig({ integrator: 'bound-mvp' });
+  _lifiInitialized = true;
+}
 
 export interface LifiToken {
   address: string;
@@ -28,6 +31,7 @@ const ETH_CHAIN_ID = 1;
  * Fetch available tokens on Ethereum from LiFi.
  */
 export async function fetchLifiTokens(): Promise<LifiToken[]> {
+  ensureLifiInit();
   const res = await fetch('https://li.quest/v1/tokens?chains=1');
   const data = await res.json();
   return (data.tokens?.['1'] ?? []) as LifiToken[];
@@ -41,6 +45,7 @@ export async function getLifiQuote(
   ethAmountWei: string,
   fromAddress: string
 ): Promise<LifiQuoteResult> {
+  ensureLifiInit();
   const result = await getRoutes({
     fromChainId: ETH_CHAIN_ID,
     toChainId: ETH_CHAIN_ID,
@@ -77,6 +82,7 @@ export async function executeLifiRoute(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   signer: any
 ): Promise<void> {
+  ensureLifiInit();
   await executeRoute(route, {
     updateRouteHook: (updatedRoute) => {
       console.log('[LiFi] Route updated:', updatedRoute.id);
@@ -90,6 +96,7 @@ export async function executeLifiRoute(
 export async function estimateGasForRoute(
   route: LifiQuoteResult['route']
 ): Promise<boolean> {
+  ensureLifiInit();
   try {
     // Check if first step has a transaction request we can estimate
     const step = route.steps[0];
