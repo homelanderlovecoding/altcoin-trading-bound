@@ -52,11 +52,26 @@ async function getSodax(): Promise<Sodax> {
     _sodax = new Sodax({ swaps: {} });
   }
   if (!_sodaxInitialized) {
-    console.log('[SODAX] Initializing ConfigService (fetching chain/asset config)...');
+    console.log('[SODAX] Initializing ConfigService...');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (_sodax as any).swaps.configService.initialize();
+    const cs = (_sodax as any).swaps.configService;
+    await cs.initialize();
     _sodaxInitialized = true;
     console.log('[SODAX] ConfigService initialized ✅');
+
+    // Log supported swap tokens per chain so we know what's actually available
+    try {
+      const allTokens = cs.getSupportedSwapTokens?.();
+      console.log('[SODAX] Supported swap tokens (all chains):', allTokens);
+      const ethTokens = cs.getSupportedSwapTokensByChainId?.('ethereum');
+      console.log('[SODAX] Supported tokens on ethereum:', ethTokens);
+      // Also check cbBTC and WETH validity
+      console.log('[SODAX] cbBTC valid on ethereum:', cs.isValidOriginalAssetAddress('ethereum', CBBTC_ADDRESS));
+      console.log('[SODAX] WETH valid on ethereum:', cs.isValidOriginalAssetAddress('ethereum', WETH_ADDRESS));
+      console.log('[SODAX] ETH (native) valid on ethereum:', cs.isValidOriginalAssetAddress('ethereum', '0x0000000000000000000000000000000000000000'));
+    } catch(e) {
+      console.warn('[SODAX] Could not inspect supported tokens:', e);
+    }
   }
   return _sodax;
 }
