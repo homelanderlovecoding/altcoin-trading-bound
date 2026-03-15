@@ -305,6 +305,10 @@ export default function Home() {
           <StatusCard state={state} onCancel={handleCancel} evmAddress={evmAddress} />
         </div>
       </main>
+      {/* Version badge */}
+      <div className="fixed bottom-3 right-3 text-xs text-zinc-600 font-mono select-none">
+        {process.env.NEXT_PUBLIC_GIT_HASH ?? 'dev'}
+      </div>
     </div>
   );
 }
