@@ -11,10 +11,13 @@ export default function WalletConnect({ onEvmAddress, onBtcAddress }: WalletConn
   const [btcAddress, setBtcAddress] = useState<string | null>(null);
   const [evmAddress, setEvmAddress] = useState<string | null>(null);
 
-  // Check if already connected on mount
+  // Check if already connected on mount (both wallets)
   useEffect(() => {
-    const checkEvm = async () => {
-      if (typeof window !== 'undefined' && window.ethereum) {
+    const checkWallets = async () => {
+      if (typeof window === 'undefined') return;
+
+      // MetaMask
+      if (window.ethereum) {
         try {
           const accounts = await window.ethereum.request({ method: 'eth_accounts' }) as string[];
           if (accounts[0]) {
@@ -23,9 +26,23 @@ export default function WalletConnect({ onEvmAddress, onBtcAddress }: WalletConn
           }
         } catch {}
       }
+
+      // Unisat — getAccounts returns current accounts without prompting
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const unisat = (window as any).unisat;
+      if (unisat) {
+        try {
+          const accounts: string[] = await unisat.getAccounts();
+          if (accounts[0]) {
+            setBtcAddress(accounts[0]);
+            onBtcAddress?.(accounts[0]);
+          }
+        } catch {}
+      }
     };
-    checkEvm();
-  }, [onEvmAddress]);
+    checkWallets();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const connectUnisat = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
