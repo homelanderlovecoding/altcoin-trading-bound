@@ -46,6 +46,7 @@ export async function getLifiQuote(
   fromAddress: string
 ): Promise<LifiQuoteResult> {
   ensureLifiInit();
+  console.log('[LiFi] getRoutes params:', { toTokenAddress, ethAmountWei, fromAddress, ETH_CHAIN_ID, ETH_ADDRESS });
   const result = await getRoutes({
     fromChainId: ETH_CHAIN_ID,
     toChainId: ETH_CHAIN_ID,
@@ -59,6 +60,7 @@ export async function getLifiQuote(
     },
   });
 
+  console.log('[LiFi] getRoutes result:', { routeCount: result.routes.length, raw: result });
   if (!result.routes.length) {
     throw new Error('No routes available for this swap');
   }

@@ -74,44 +74,54 @@ export default function Home() {
   }, []);
 
   // ── Quote fetching ──────────────────────────────────────────────────────
-  const handleAmountChange = async (value: string) => {
-    setAmount(value);
-    if (!value || !selectedToken || parseFloat(value) <= 0) return;
+  const fetchQuotes = async (btcAmount: string, token: LifiToken, evm: string | null) => {
+    console.group('[Bound] fetchQuotes');
+    console.log('Input:', { btcAmount, token: token.symbol, tokenAddress: token.address, evmAddress: evm });
 
     setQuoteLoading(true);
     try {
-      const sodaxQ = await getSodaxQuote(value);
+      console.log('[Bound] Step 1: getSodaxQuote...');
+      const sodaxQ = await getSodaxQuote(btcAmount);
+      console.log('[Bound] SODAX quote:', sodaxQ);
+
+      console.log('[Bound] Step 2: getLifiQuote...', {
+        toToken: token.symbol,
+        ethAmountWei: sodaxQ.ethOut,
+        fromAddress: evm ?? '0x000...000',
+      });
       const lifiQ = await getLifiQuote(
-        selectedToken.address,
+        token.address,
         sodaxQ.ethOut,
-        evmAddress ?? '0x0000000000000000000000000000000000000000'
+        evm ?? '0x0000000000000000000000000000000000000000'
       );
+      console.log('[Bound] LiFi quote:', lifiQ);
+
       setQuotes(sodaxQ, lifiQ);
+      console.log('[Bound] Quotes set ✅');
     } catch (e) {
-      console.error('Quote error:', e);
+      console.error('[Bound] Quote failed ❌', e);
+      if (e instanceof Error) {
+        console.error('  message:', e.message);
+        console.error('  stack:', e.stack);
+      } else {
+        console.error('  raw error:', JSON.stringify(e, null, 2));
+      }
     } finally {
       setQuoteLoading(false);
+      console.groupEnd();
     }
+  };
+
+  const handleAmountChange = async (value: string) => {
+    setAmount(value);
+    if (!value || !selectedToken || parseFloat(value) <= 0) return;
+    await fetchQuotes(value, selectedToken, evmAddress);
   };
 
   const handleTokenSelect = async (token: LifiToken) => {
     setSelectedToken(token);
     if (!state.btcAmount || parseFloat(state.btcAmount) <= 0) return;
-
-    setQuoteLoading(true);
-    try {
-      const sodaxQ = await getSodaxQuote(state.btcAmount);
-      const lifiQ = await getLifiQuote(
-        token.address,
-        sodaxQ.ethOut,
-        evmAddress ?? '0x0000000000000000000000000000000000000000'
-      );
-      setQuotes(sodaxQ, lifiQ);
-    } catch (e) {
-      console.error('Quote error:', e);
-    } finally {
-      setQuoteLoading(false);
-    }
+    await fetchQuotes(state.btcAmount, token, evmAddress);
   };
 
   // ── Swap execution ──────────────────────────────────────────────────────

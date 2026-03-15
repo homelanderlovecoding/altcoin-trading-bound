@@ -128,7 +128,9 @@ export async function getSodaxQuote(btcAmount: string): Promise<SodaxQuote> {
     quote_type: 'exact_input',
   };
 
+  console.log('[SODAX] getQuote payload:', payload);
   const result = await sodax.swaps.getQuote(payload);
+  console.log('[SODAX] getQuote result:', result);
 
   if (!result.ok) {
     // Fallback estimate when solver is unavailable
