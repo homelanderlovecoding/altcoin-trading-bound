@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import WalletConnect from '@/components/WalletConnect';
 import TokenDropdown from '@/components/TokenDropdown';
 import StatusCard from '@/components/StatusCard';
@@ -8,12 +8,14 @@ import { useSwapState } from '@/hooks/useSwapState';
 import { LifiToken, getLifiQuote } from '@/lib/lifi';
 import { getSodaxQuote, executeSodaxSwap, waitForSodaxSettlement } from '@/lib/sodax';
 import { startRetryLoop } from '@/lib/retryLeg2';
+import { loadSwap } from '@/lib/swapStorage';
 
 export default function Home() {
   const [btcAddress, setBtcAddress] = useState<string | null>(null);
   const [evmAddress, setEvmAddress] = useState<string | null>(null);
   const [selectedToken, setSelectedToken] = useState<LifiToken | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
+  const [restoredBanner, setRestoredBanner] = useState(false);
   const cancelRetryRef = useRef<(() => void) | null>(null);
 
   const {
@@ -27,29 +29,64 @@ export default function Home() {
     completeLeg2,
     cancel,
     setError,
+    restore,
     reset,
-  } = useSwapState();
+  } = useSwapState({
+    persistContext: { selectedToken, evmAddress, btcAddress },
+  });
 
-  const walletsConnected = btcAddress && evmAddress;
+  // ── Restore persisted swap on mount ────────────────────────────────────
+  useEffect(() => {
+    const persisted = loadSwap();
+    if (!persisted) return;
 
-  // Fetch quotes when amount or token changes
+    const { state: savedState, selectedToken: savedToken, evmAddress: savedEvm, btcAddress: savedBtc } = persisted;
+
+    // Only restore if still in a resumable state
+    if (!['LEG2_PENDING', 'LEG2_RETRY'].includes(savedState.status)) return;
+
+    // Rehydrate UI state
+    restore(savedState);
+    setSelectedToken(savedToken);
+    setEvmAddress(savedEvm);
+    setBtcAddress(savedBtc);
+    setRestoredBanner(true);
+
+    // Resume retry loop
+    if (savedState.lifiQuote && savedState.sodaxQuote) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signer = (window as any).ethereum;
+
+      const cancelFn = startRetryLoop({
+        toTokenAddress: savedToken.address,
+        ethAmountWei: savedState.sodaxQuote.ethOut,
+        fromAddress: savedEvm,
+        originalQuote: savedState.lifiQuote,
+        signer,
+        onRetryStart: (attempt, nextRetryAt) => retryLeg2(attempt, nextRetryAt),
+        onSuccess: () => { completeLeg2(); cancelRetryRef.current = null; },
+        onCancelled: (intermediateEth) => { cancel(intermediateEth); cancelRetryRef.current = null; },
+      });
+
+      cancelRetryRef.current = cancelFn;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Quote fetching ──────────────────────────────────────────────────────
   const handleAmountChange = async (value: string) => {
     setAmount(value);
     if (!value || !selectedToken || parseFloat(value) <= 0) return;
 
     setQuoteLoading(true);
     try {
-      const [sodaxQ, lifiQ] = await Promise.all([
-        getSodaxQuote(value),
-        getLifiQuote(selectedToken.address, '0', evmAddress ?? '0x0000000000000000000000000000000000000000'),
-      ]);
-      // Get proper lifi quote using SODAX ETH out amount
-      const lifiQFull = await getLifiQuote(
+      const sodaxQ = await getSodaxQuote(value);
+      const lifiQ = await getLifiQuote(
         selectedToken.address,
         sodaxQ.ethOut,
         evmAddress ?? '0x0000000000000000000000000000000000000000'
       );
-      setQuotes(sodaxQ, lifiQFull);
+      setQuotes(sodaxQ, lifiQ);
     } catch (e) {
       console.error('Quote error:', e);
     } finally {
@@ -77,13 +114,14 @@ export default function Home() {
     }
   };
 
+  // ── Swap execution ──────────────────────────────────────────────────────
   const handleSwap = async () => {
-    if (!walletsConnected || !state.sodaxQuote || !state.lifiQuote || !selectedToken) return;
+    if (!evmAddress || !state.sodaxQuote || !state.lifiQuote || !selectedToken) return;
 
     try {
       // Leg 1: BTC → ETH
       startLeg1();
-      const { txHash } = await executeSodaxSwap(state.btcAmount, evmAddress!);
+      const { txHash } = await executeSodaxSwap(state.btcAmount, evmAddress);
       await waitForSodaxSettlement(txHash);
       completeLeg1(txHash);
 
@@ -96,20 +134,12 @@ export default function Home() {
       const cancelFn = startRetryLoop({
         toTokenAddress: selectedToken.address,
         ethAmountWei: state.sodaxQuote.ethOut,
-        fromAddress: evmAddress!,
+        fromAddress: evmAddress,
         originalQuote: state.lifiQuote,
         signer,
-        onRetryStart: (attempt, nextRetryAt) => {
-          retryLeg2(attempt, nextRetryAt);
-        },
-        onSuccess: () => {
-          completeLeg2();
-          cancelRetryRef.current = null;
-        },
-        onCancelled: (intermediateEth) => {
-          cancel(intermediateEth);
-          cancelRetryRef.current = null;
-        },
+        onRetryStart: (attempt, nextRetryAt) => retryLeg2(attempt, nextRetryAt),
+        onSuccess: () => { completeLeg2(); cancelRetryRef.current = null; },
+        onCancelled: (intermediateEth) => { cancel(intermediateEth); cancelRetryRef.current = null; },
       });
 
       cancelRetryRef.current = cancelFn;
@@ -119,13 +149,12 @@ export default function Home() {
   };
 
   const handleCancel = () => {
-    if (cancelRetryRef.current) {
-      cancelRetryRef.current();
-    }
+    cancelRetryRef.current?.();
   };
 
   const canSwap =
-    walletsConnected &&
+    evmAddress &&
+    btcAddress &&
     state.btcAmount &&
     parseFloat(state.btcAmount) > 0 &&
     selectedToken &&
@@ -145,11 +174,32 @@ export default function Home() {
         <WalletConnect onEvmAddress={setEvmAddress} onBtcAddress={setBtcAddress} />
       </header>
 
+      {/* Restored swap banner */}
+      {restoredBanner && (
+        <div className="mx-auto max-w-md mt-4 px-4">
+          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-3 flex items-start gap-3">
+            <span className="text-yellow-400 mt-0.5">⚠️</span>
+            <div>
+              <div className="text-sm font-medium text-yellow-300">Swap resumed</div>
+              <div className="text-xs text-yellow-400/70 mt-0.5">
+                We found an in-flight swap from your last session. The leg 2 retry loop has been restarted.
+              </div>
+            </div>
+            <button
+              onClick={() => setRestoredBanner(false)}
+              className="ml-auto text-yellow-500/50 hover:text-yellow-400 text-lg leading-none"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main */}
-      <main className="flex justify-center px-4 pt-16 pb-24">
+      <main className="flex justify-center px-4 pt-10 pb-24">
         <div className="w-full max-w-md">
           <h1 className="text-2xl font-bold mb-1">Swap</h1>
-          <p className="text-zinc-400 text-sm mb-8">BTC → any token, two-leg execution</p>
+          <p className="text-zinc-400 text-sm mb-6">BTC → any token, two-leg execution</p>
 
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5 space-y-4">
             {/* You pay */}
@@ -187,9 +237,7 @@ export default function Home() {
                     <span className="text-zinc-500 text-sm">Fetching quote…</span>
                   ) : state.lifiQuote ? (
                     <div>
-                      <div className="text-xl font-semibold">
-                        ~{state.lifiQuote.expectedOutputFormatted}
-                      </div>
+                      <div className="text-xl font-semibold">~{state.lifiQuote.expectedOutputFormatted}</div>
                       <div className="text-xs text-zinc-400 mt-0.5">
                         via {state.sodaxQuote?.ethOutFormatted} ETH intermediate
                       </div>
@@ -202,7 +250,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Route info */}
+            {/* Route breakdown */}
             {state.sodaxQuote && state.lifiQuote && (
               <div className="text-xs text-zinc-500 space-y-1 px-1">
                 <div className="flex justify-between">
@@ -211,7 +259,10 @@ export default function Home() {
                 </div>
                 <div className="flex justify-between">
                   <span>Leg 2 (LiFi)</span>
-                  <span>{state.sodaxQuote.ethOutFormatted} ETH → ~{state.lifiQuote.expectedOutputFormatted} {selectedToken?.symbol}</span>
+                  <span>
+                    {state.sodaxQuote.ethOutFormatted} ETH → ~{state.lifiQuote.expectedOutputFormatted}{' '}
+                    {selectedToken?.symbol}
+                  </span>
                 </div>
               </div>
             )}
@@ -223,14 +274,14 @@ export default function Home() {
               </div>
             )}
 
-            {/* Swap button */}
+            {/* Swap / Reset button */}
             {state.status === 'IDLE' ? (
               <button
                 onClick={handleSwap}
                 disabled={!canSwap}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white font-semibold text-base disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
               >
-                {!walletsConnected
+                {!btcAddress || !evmAddress
                   ? 'Connect wallets to swap'
                   : !state.btcAmount || parseFloat(state.btcAmount) <= 0
                   ? 'Enter an amount'

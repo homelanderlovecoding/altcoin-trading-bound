@@ -10,6 +10,9 @@
   },
   "dependencies": {
     "@lifi/sdk": "^3.16.1",
+    "@sodax/sdk": "^1.3.0-beta",
+    "@sodax/types": "^1.3.0-beta",
+    "@sodax/wallet-sdk-core": "^1.3.0-beta",
     "@tanstack/react-query": "^5.90.21",
     "next": "16.1.6",
     "react": "19.2.3",
