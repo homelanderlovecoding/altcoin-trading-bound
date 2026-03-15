@@ -45,10 +45,18 @@ const CBBTC_ADDRESS = '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf';
 // ─── Singleton Sodax instance ─────────────────────────────────────────────
 
 let _sodax: Sodax | null = null;
+let _sodaxInitialized = false;
 
-function getSodax(): Sodax {
+async function getSodax(): Promise<Sodax> {
   if (!_sodax) {
     _sodax = new Sodax({ swaps: {} });
+  }
+  if (!_sodaxInitialized) {
+    console.log('[SODAX] Initializing ConfigService (fetching chain/asset config)...');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (_sodax as any).swaps.configService.initialize();
+    _sodaxInitialized = true;
+    console.log('[SODAX] ConfigService initialized ✅');
   }
   return _sodax;
 }
@@ -114,7 +122,7 @@ export interface SodaxSwapResult {
  * @param btcAmount - Amount in BTC (e.g. "0.01")
  */
 export async function getSodaxQuote(btcAmount: string): Promise<SodaxQuote> {
-  const sodax = getSodax();
+  const sodax = await getSodax();
 
   // cbBTC uses 8 decimals (same as BTC)
   const inputAmountRaw = BigInt(Math.round(parseFloat(btcAmount) * 1e8));
@@ -168,7 +176,7 @@ export async function executeSodaxSwap(
   btcAmount: string,
   recipientEthAddress: string
 ): Promise<SodaxSwapResult> {
-  const sodax = getSodax();
+  const sodax = await getSodax();
   const spokeProvider = buildEvmSpokeProvider(recipientEthAddress);
 
   const inputAmountRaw = BigInt(Math.round(parseFloat(btcAmount) * 1e8));
